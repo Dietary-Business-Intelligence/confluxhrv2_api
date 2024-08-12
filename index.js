@@ -479,5 +479,140 @@ app.post('/insert_kpi_targetHistory', async (req, res) => {
 });
 
 
+// Update Old Targets
+
+app.put('/update_oldTargets', (req, res) => {
+  const { kpiid } = req.query;
+  const { goal_task, uom, total_target, kpi_target, updated_by } = req.body;
+
+  // Update hrms_prm_task_title_details
+  let updateTitleDetailsQuery = `UPDATE hrms_prm_task_title_details SET goal_task = ?, uom = ?, total_target = ?, updated_by = ? WHERE id = ?`;
+  connection.query(updateTitleDetailsQuery, [goal_task, uom, total_target, updated_by, kpiid], (err, result) => {
+    if (err) {
+      console.error('Error updating hrms_prm_task_title_details:', err);
+      return res.status(500).send('Error updating hrms_prm_task_title_details');
+    }
+
+    // Update hrms_prm_kpi_target_achievement
+    let updateKpiTargetAchievementPromises = kpi_target.map(kpi => {
+      const { review_month, target } = kpi;
+      return new Promise((resolve, reject) => {
+        let updateKpiTargetAchievementQuery = `UPDATE hrms_prm_kpi_target_achievement SET target = ?, updated_by = ? WHERE kpi_id = ? AND review_month = ?`;
+        connection.query(updateKpiTargetAchievementQuery, [target, updated_by, kpiid, review_month], (err, result) => {
+          if (err) {
+            console.error('Error updating hrms_prm_kpi_target_achievement:', err);
+            reject(err);
+          } else {
+            resolve(result);
+          }
+        });
+      });
+    });
+
+    Promise.all(updateKpiTargetAchievementPromises)
+      .then(results => {
+        res.status(200).json({ success: true, message: 'KPI Details updated successfully.', alert_type: 'success' });
+      })
+      .catch(err => {
+        res.status(500).send('Error updating hrms_prm_kpi_target_achievement');
+      });
+  });
+});
+
+
+
+app.post('/save_goalTarget_aginst_existingGoal', async (req, res) => {
+  const { company_id, financial_year, emp_code, staffid, goal_id, goal_task, uom, total_target, created_by, kpi_target } = req.body;
+
+  try {
+    // Insert into hrms_prm_task_title_details
+    let insertResult = await new Promise((resolve, reject) => {
+      connection.query(
+        `INSERT INTO hrms_prm_task_title_details (company_id, financial_year, emp_code, staffid, goal_id, goal_task, uom, total_target, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [company_id, financial_year, emp_code, staffid, goal_id, goal_task, uom, total_target, created_by],
+        (error, results) => {
+          if (error) return reject(error);
+          resolve(results);
+        }
+      );
+    });
+
+    const insertedId = insertResult.insertId;
+
+    for (const target of kpi_target) {
+      try {
+        await new Promise((resolve, reject) => {
+          connection.query(
+            'INSERT INTO hrms_prm_kpi_target_achievement (company_id, financial_year, emp_code, staffid, kpi_id, review_month, target, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [company_id, financial_year, emp_code, staffid, insertedId, target.review_month, target.target, created_by],
+            (err, result) => {
+              if (err) return reject(err);
+              resolve(result);
+            }
+          );
+        });
+      } catch (queryError) {
+        console.error('Error during KPI target insertion:', queryError);
+        return res.status(500).send('Error inserting KPI target details.');
+      }
+    }
+
+    // Retrieve the inserted kpi details
+    let kpiDetailResult = await new Promise((resolve, reject) => {
+      connection.query(
+        'SELECT id, company_id, staffid, emp_code, goal_id, financial_year, goal_task, uom, total_target FROM hrms_prm_task_title_details WHERE id = ?',
+        [insertedId], // Use the correct insertedId
+        (err, result) => {
+          if (err) return reject(err);
+          resolve(result);
+        }
+      );
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'KPI Details added successfully against existing Goal.',
+      alert_type: 'success',
+      insertedDetails: kpiDetailResult
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'An error occurred', error });
+  }
+});
+
+
+// UPDATE Goal Title when edit
+app.put('/update_goalTitle', (req, res) => {
+  const goalId = req.query.goalId;
+  const { goal_title } = req.body;
+
+  if (!goal_title) {
+    return res.status(400).json({ error: 'Missing Updated Goal' });
+  }
+
+  let updateGoalTitleQuery = `
+    UPDATE hrms_prm_task_title
+    SET goal_title = ?
+    WHERE id = ?
+  `;
+
+  connection.query(updateGoalTitleQuery, [goal_title, goalId], (err, results) => {
+    if (err) {
+      console.error('Error updating Goal Title:', err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    if (results.affectedRows === 0) {
+      return res.status(404).json({ error: 'goalId not found' });
+    }
+
+    res.status(200).json({ success: true, message: 'Goal Title updated successfully', alert_type: 'success' });
+  });
+});
+
+
 
 app.listen(5000)
