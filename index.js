@@ -151,7 +151,6 @@ app.get('/get_quarterly_month_data', (req, resp) => {
 app.get('/fetch_goals', (req, res) => {
   const { company_id, financial_year, emp_code, staffid, quarter_no } = req.query;
 
-
   let goalQuery = `
   SELECT *
     FROM hrms_prm_task_title 
@@ -199,6 +198,40 @@ app.get('/fetch_goals', (req, res) => {
           return res.status(500).send('Error fetching KPI targets.');
         }
 
+
+        if (quarter_no == 3) {
+
+          kpiDetails.forEach(detail => {
+            const targets = kpiTargets.filter(target => target.kpi_id === detail.id);
+            const reviewMonths = targets.map(target => target.review_month);
+
+            // Check and add dummy targets for review months 7, 8, and 9
+            ['7', '8', '9'].forEach(month => {
+              if (!reviewMonths.includes(month)) {
+                kpiTargets.push({
+                  kpi_id: detail.id,
+                  review_month: month,
+                  target: 0,  // Adjust as needed for dummy data
+                  achieved: 0 // Adjust as needed for dummy data
+                });
+              }
+            });
+          });
+
+          // Sort kpiTargets to ensure that the entries with review_months '7', '8', and '9' are at the beginning
+          kpiTargets.sort((a, b) => {
+            const priorityMonths = ['7', '8', '9'];
+            if (priorityMonths.includes(a.review_month) && priorityMonths.includes(b.review_month)) {
+              return priorityMonths.indexOf(a.review_month) - priorityMonths.indexOf(b.review_month);
+            }
+            if (priorityMonths.includes(a.review_month)) return -1; // Move priority months to the beginning
+            if (priorityMonths.includes(b.review_month)) return 1;  // Move priority months to the beginning
+            return 0; // Keep the original order for other months
+          });
+        }
+
+
+
         // Combine results
         const results = goals.map(goal => {
           return {
@@ -221,8 +254,6 @@ app.get('/fetch_goals', (req, res) => {
 });
 
 // UPDATE KPI Achievements
-
-const isMultipleOf3 = (num) => num % 3 === 0;
 
 app.put('/update_balance_kpiTarget', (req, res) => {
   const kpiId = parseFloat(req.query.kpiId);
@@ -248,74 +279,78 @@ app.put('/update_balance_kpiTarget', (req, res) => {
       let updateNextTargetQuery = 'UPDATE hrms_prm_kpi_target_achievement SET target = ? WHERE id = ?';
       let updateNextTargetData = [targetElements, nextKpiId];
 
-      if (!isMultipleOf3(kpiId)) {
-        if (achievedNum >= totalTargetNum) {
-          updateNextTargetData[0] = 0;
-          connection.query(updateNextTargetQuery, updateNextTargetData, (err, results) => {
+      if (achievedNum >= totalTargetNum) {
+        updateNextTargetData[0] = 0;
+        connection.query(updateNextTargetQuery, updateNextTargetData, (err, results) => {
+          if (err || results.affectedRows === 0) {
+            return res.status(err ? 500 : 404).json({ error: err ? 'Database error' : 'nextKpiId not found' });
+          }
+
+          if (thirdKpiId) {
+            connection.query('UPDATE hrms_prm_kpi_target_achievement SET target = 0 WHERE id = ?', [thirdKpiId], (err, results) => {
+              if (err || results.affectedRows === 0) {
+                // Handle case where thirdKpiId does not exist or other errors
+                if (err) {
+                  console.error('Database error:', err);
+                } else {
+                  console.warn('thirdKpiId not found or no rows affected');
+                }
+              }
+              // Responding based on next KPI update success
+              res.status(200).json({ success: true, message: 'KPI Achievement updated successfully', alert_type: 'success' });
+            });
+          } else {
+            res.status(200).json({ success: true, message: 'KPI Achievement updated successfully', alert_type: 'success' });
+          }
+        });
+
+      } else if (achievedNum < targetedNum) {
+
+        connection.query(updateNextTargetQuery, updateNextTargetData, (err, results) => {
+          if (err || results.affectedRows === 0) {
+            return res.status(err ? 500 : 404).json({ error: err ? 'Database error' : 'nextKpiId not found' });
+          }
+          res.status(200).json({ success: true, message: 'KPI Achievement updated successfully', alert_type: 'success' });
+
+        })
+      } else if (achievedNum > targetedNum) {
+        let updateThirdTargetQuery = 'UPDATE hrms_prm_kpi_target_achievement SET target = ? WHERE id = ?';
+
+        if (serial == 2) {
+          // Update nextKpiId
+          connection.query(updateNextTargetQuery, [targetElements, nextKpiId], (err, results) => {
             if (err || results.affectedRows === 0) {
               return res.status(err ? 500 : 404).json({ error: err ? 'Database error' : 'nextKpiId not found' });
             }
 
-            if (thirdKpiId && isMultipleOf3(thirdKpiId)) {
-              connection.query('UPDATE hrms_prm_kpi_target_achievement SET target = 0 WHERE id = ?', [thirdKpiId], (err, results) => {
+            // Update thirdKpiId
+            if (thirdKpiId) {
+              connection.query(updateThirdTargetQuery, [targetElements, thirdKpiId], (err, results) => {
                 if (err || results.affectedRows === 0) {
-                  // Handle case where thirdKpiId does not exist or other errors
-                  if (err) {
-                    console.error('Database error:', err);
-                  } else {
-                    console.warn('thirdKpiId not found or no rows affected');
-                  }
+                  return res.status(err ? 500 : 404).json({ error: err ? 'Database error' : 'thirdKpiId not found' });
                 }
-                // Responding based on next KPI update success
-                res.status(200).json({ success: true, message: 'Targets updated to 0 for next KPI', alert_type: 'success' });
+                res.status(200).json({ success: true, message: 'KPI Achievement updated successfully', alert_type: 'success' });
               });
             } else {
-              res.status(200).json({ success: true, message: 'Target updated to 0 for next KPI', alert_type: 'success' });
+              res.status(200).json({ success: true, message: 'KPI Achievement updated successfully', alert_type: 'success' });
             }
           });
+        } else if (serial == 1) {
 
-        } else if (achievedNum < targetedNum) {
-
-          connection.query(updateNextTargetQuery, updateNextTargetData, (err, results) => {
+          // Only update thirdKpiId
+          connection.query(updateThirdTargetQuery, [targetElements, nextKpiId], (err, results) => {
             if (err || results.affectedRows === 0) {
-              return res.status(err ? 500 : 404).json({ error: err ? 'Database error' : 'nextKpiId not found' });
+              return res.status(err ? 500 : 404).json({ error: err ? 'Database error' : 'thirdKpiId not found' });
             }
-            res.status(200).json({ success: true, message: 'Target updated', alert_type: 'success' });
-
-          })
-        } else {
-
-          connection.query(updateNextTargetQuery, updateNextTargetData, (err, results) => {
-            if (err || results.affectedRows === 0) {
-              return res.status(err ? 500 : 404).json({ error: err ? 'Database error' : 'nextKpiId not found' });
-            }
-
-            if (isMultipleOf3(thirdKpiId)) {
-              connection.query('UPDATE hrms_prm_kpi_target_achievement SET target = ? WHERE id = ?', [targetElements, thirdKpiId], (err, results) => {
-                if (err || results.affectedRows === 0) {
-                  // Handle case where thirdKpiId does not exist or other errors
-                  if (err) {
-                    // console.error('Database error:', err);
-                    res.status(404).json({ success: true, message: 'Target updddddated', alert_type: 'warning' });
-                  } else {
-                    console.warn('thirdKpiId not found or no rows affected');
-                  }
-                }
-                // Responding based on next KPI update success
-                res.status(200).json({ success: true, message: 'Target updated', alert_type: 'success' });
-              });
-            } else {
-              res.status(200).json({ success: true, message: 'Target updated', alert_type: 'success' });
-            }
+            res.status(200).json({ success: true, message: 'KPI Achievement updated successfully', alert_type: 'success' });
           });
         }
       }
     } else {
-      res.status(200).json({ success: true, message: 'Target updated', alert_type: 'success' });
-
+      res.status(200).json({ success: true, message: 'KPI Achievement updated successfully', alert_type: 'success' });
     }
   });
-})
+});
 
 // FETCH KPI DATA BY ID
 
@@ -478,6 +513,177 @@ app.post('/insert_kpi_targetHistory', async (req, res) => {
   }
 });
 
+
+app.put('/update_oldTargets', (req, res) => {
+  const { kpiid } = req.query;
+  const { company_id, financial_year, emp_code, staffid, goal_task, uom, total_target, kpi_target, created_by, updated_by } = req.body;
+
+  // Update hrms_prm_task_title_details
+  let updateTitleDetailsQuery = `UPDATE hrms_prm_task_title_details SET goal_task = ?, uom = ?, total_target = ?, updated_by = ? WHERE id = ?`;
+  connection.query(updateTitleDetailsQuery, [goal_task, uom, total_target, updated_by, kpiid], (err, result) => {
+    if (err) {
+      console.error('Error updating hrms_prm_task_title_details:', err);
+      return res.status(500).send('Error updating hrms_prm_task_title_details');
+    }
+
+    // Process kpi_target data
+    let processKpiTargetPromises = kpi_target.map(kpi => {
+      const { review_month, target } = kpi;
+      return new Promise((resolve, reject) => {
+        // Check if data exists for kpiid and review_month
+        let checkKpiExistenceQuery = `SELECT * FROM hrms_prm_kpi_target_achievement WHERE kpi_id = ? AND review_month = ?`;
+        connection.query(checkKpiExistenceQuery, [kpiid, review_month], (err, result) => {
+          if (err) {
+            console.error('Error checking kpiid and review_month existence:', err);
+            reject(err);
+          } else {
+            if (result.length > 0) {
+              // Data exists, perform update
+              let updateKpiTargetAchievementQuery = `UPDATE hrms_prm_kpi_target_achievement SET target = ?, updated_by = ? WHERE kpi_id = ? AND review_month = ?`;
+              connection.query(updateKpiTargetAchievementQuery, [target, updated_by, kpiid, review_month], (err, result) => {
+                if (err) {
+                  console.error('Error updating hrms_prm_kpi_target_achievement:', err);
+                  reject(err);
+                } else {
+                  resolve(result);
+                }
+              });
+            } else {
+              // Data does not exist, perform insert
+              let insertKpiTargetAchievementQuery = `INSERT INTO hrms_prm_kpi_target_achievement (company_id,financial_year,emp_code,staffid,kpi_id, review_month, target, created_by) VALUES (?, ?, ?, ?, ?, ?, ? ,?)`;
+              connection.query(insertKpiTargetAchievementQuery, [company_id, financial_year, emp_code, staffid, kpiid, review_month, target, created_by], (err, result) => {
+                if (err) {
+                  console.error('Error inserting into hrms_prm_kpi_target_achievement:', err);
+                  reject(err);
+                } else {
+                  resolve(result);
+                }
+              });
+            }
+          }
+        });
+      });
+    });
+
+    Promise.all(processKpiTargetPromises)
+      .then(results => {
+        res.status(200).json({ success: true, message: 'KPI Details updated successfully.', alert_type: 'success' });
+      })
+      .catch(err => {
+        res.status(500).send('Error processing KPI details');
+      });
+  });
+});
+
+
+app.post('/save_goalTarget_aginst_existingGoal', async (req, res) => {
+  const { company_id, financial_year, emp_code, staffid, goal_id, goal_task, uom, total_target, created_by, kpi_target } = req.body;
+
+  try {
+    // Insert into hrms_prm_task_title_details
+    let insertResult = await new Promise((resolve, reject) => {
+      connection.query(
+        `INSERT INTO hrms_prm_task_title_details (company_id, financial_year, emp_code, staffid, goal_id, goal_task, uom, total_target, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [company_id, financial_year, emp_code, staffid, goal_id, goal_task, uom, total_target, created_by],
+        (error, results) => {
+          if (error) return reject(error);
+          resolve(results);
+        }
+      );
+    });
+
+    const insertedId = insertResult.insertId;
+
+    for (const target of kpi_target) {
+      try {
+        await new Promise((resolve, reject) => {
+          connection.query(
+            'INSERT INTO hrms_prm_kpi_target_achievement (company_id, financial_year, emp_code, staffid, kpi_id, review_month, target, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [company_id, financial_year, emp_code, staffid, insertedId, target.review_month, target.target, created_by],
+            (err, result) => {
+              if (err) return reject(err);
+              resolve(result);
+            }
+          );
+        });
+      } catch (queryError) {
+        console.error('Error during KPI target insertion:', queryError);
+        return res.status(500).send('Error inserting KPI target details.');
+      }
+    }
+
+    // Retrieve the inserted kpi details
+    let kpiDetailResult = await new Promise((resolve, reject) => {
+      connection.query(
+        'SELECT id, company_id, staffid, emp_code, goal_id, financial_year, goal_task, uom, total_target FROM hrms_prm_task_title_details WHERE id = ?',
+        [insertedId], // Use the correct insertedId
+        (err, result) => {
+          if (err) return reject(err);
+          resolve(result);
+        }
+      );
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'KPI Details added successfully against existing Goal.',
+      alert_type: 'success',
+      insertedDetails: kpiDetailResult
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'An error occurred', error });
+  }
+});
+
+
+// UPDATE Goal Title when edit
+app.put('/update_goalTitle', (req, res) => {
+  const goalId = req.query.goalId;
+  const { goal_title } = req.body;
+
+  if (!goal_title) {
+    return res.status(400).json({ error: 'Missing Updated Goal' });
+  }
+
+  let updateGoalTitleQuery = `
+    UPDATE hrms_prm_task_title
+    SET goal_title = ?
+    WHERE id = ?
+  `;
+
+  connection.query(updateGoalTitleQuery, [goal_title, goalId], (err, results) => {
+    if (err) {
+      console.error('Error updating Goal Title:', err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    if (results.affectedRows === 0) {
+      return res.status(404).json({ error: 'goalId not found' });
+    }
+
+    res.status(200).json({ success: true, message: 'Goal Title updated successfully', alert_type: 'success' });
+  });
+});
+
+app.put('/update_kpiAchieved', (req, res) => {
+  const kpiId = parseFloat(req.query.kpiId);
+  const { achieved } = req.body;
+  const achievedNum = parseFloat(achieved);
+
+  if (isNaN(achievedNum)) {
+    return res.status(400).json({ error: 'Invalid or missing required fields' });
+  }
+
+  connection.query('UPDATE hrms_prm_kpi_target_achievement SET achieved = ? WHERE id = ?', [achievedNum, kpiId], (err, results) => {
+    if (err || results.affectedRows === 0) {
+      return res.status(err ? 500 : 404).json({ error: err ? 'Database error' : 'kpiId not found' });
+    }
+    res.status(200).json({ success: true, message: 'Target updated for kpiId', alert_type: 'success' });
+  });
+});
 
 
 app.listen(5000)
