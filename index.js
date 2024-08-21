@@ -1,6 +1,7 @@
 const express = require('express')
 const bodyParser = require('body-parser');
 const connection = require('./dbconfig')
+const { generateToken, verifyToken } = require('./middleware/authMiddleware.js'); // Import the middleware
 const app = express()
 app.use(express.json())
 const cors = require('cors');
@@ -760,8 +761,22 @@ app.post('/add_basicEmpDetails', (req, res) => {
   });
 });
 
+// Route to generate token
+app.post('/api/v1/generatetoken', (req, res) => {
+  const { em_email } = req.body;
+
+  if (!em_email) {
+    return res.status(400).json({ error: 'em_email is required' });
+  }
+
+  const token = generateToken(em_email);
+
+  res.status(200).json({ token });
+});
+
+
 // Route to fetch employee details by email
-app.get('/getEmployeeDetails', (req, res) => {
+app.get('/api/v1/getemployeedetails', verifyToken, (req, res) => {
   const { em_email } = req.query;
 
   if (!em_email) {
@@ -769,7 +784,7 @@ app.get('/getEmployeeDetails', (req, res) => {
   }
 
   // SQL query to fetch employee details
-  const query = `SELECT staffid,em_id, first_name, last_name,em_email FROM hrms_employee WHERE em_email = ?`;
+  const query = `SELECT staffid, em_id, first_name, last_name, em_email FROM hrms_employee WHERE em_email = ?`;
 
   connection.query(query, [em_email], (err, results) => {
     if (err) {
@@ -785,6 +800,9 @@ app.get('/getEmployeeDetails', (req, res) => {
     res.status(200).json(results[0]);
   });
 });
+
+
+
 
 
 
