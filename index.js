@@ -784,7 +784,7 @@ app.get('/api/v1/getemployeedetails', verifyToken, (req, res) => {
   }
 
   // SQL query to fetch employee details
-  const query = `SELECT staffid, em_id, first_name, last_name, em_email FROM hrms_employee WHERE em_email = ?`;
+  const query = `SELECT staffid, em_id, first_name, last_name, em_email FROM hrms_employee WHERE em_email = ? AND status = 'ACTIVE'`;
 
   connection.query(query, [em_email], (err, results) => {
     if (err) {
